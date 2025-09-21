@@ -26,6 +26,18 @@ ASSEMBLY_LANGUAGE_MAP = {
     Languages.PT: "pt",
     Languages.TR: "tr",
 }
+DEEPGRAM_LANGUAGE_MAP = {
+    Languages.EN: "en",
+    Languages.ZH: "zh",
+    Languages.DE: "de",
+    Languages.ES: "es",
+    Languages.RU: "ru",
+    Languages.KO: "ko",
+    Languages.FR: "fr",
+    Languages.JA: "ja",
+    Languages.PT: "pt",
+    Languages.TR: "tr",
+}
 
 # ElevenLabs uses ISO 639-2 or custom codes, so map accordingly
 ELEVENLABS_LANGUAGE_MAP = {

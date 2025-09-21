@@ -16,6 +16,7 @@ MODEL_IDs=(
     "revai/machine" # please use --use_url=True
     "revai/fusion" # please use --use_url=True
     "speechmatics/enhanced"
+    "deepgram/nova-3"
 )
 
 MAX_WORKERS=10
