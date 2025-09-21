@@ -23,6 +23,16 @@ from speechmatics.batch_client import BatchClient
 from httpx import HTTPStatusError
 from requests_toolbelt import MultipartEncoder
 
+from utils.constants import (
+    ASSEMBLY_LANGUAGE_MAP,
+    ELEVENLABS_LANGUAGE_MAP,
+    OPENAI_LANGUAGE_MAP,
+    REVAI_LANGUAGE_MAP,
+    SPEECHMATICS_LANGUAGE_MAP,
+)
+from utils.enums import Languages
+from utils.load_deepdub_dataset import create_hf_dataset_from_folder
+
 load_dotenv()
 
 
@@ -69,6 +79,7 @@ def transcribe_with_retry(
     model_name: str,
     audio_file_path: Optional[str],
     sample: dict,
+    language: Languages,
     max_retries=10,
     use_url=False,
 ):
@@ -88,7 +99,7 @@ def transcribe_with_retry(
                 )
                 with BatchClient(settings) as client:
                     config = BatchTranscriptionConfig(
-                        language="en",
+                        language=SPEECHMATICS_LANGUAGE_MAP[language],
                         enable_entities=True,
                         operating_point=model_name[len(PREFIX) :],
                     )
@@ -137,9 +148,14 @@ def transcribe_with_retry(
                                 and len(status["job"]["errors"]) > 0
                             ):
                                 errors = status["job"]["errors"]
-                                if "message" in errors[-1] and "failed to fetch file" in errors[-1]["message"]:
+                                if (
+                                    "message" in errors[-1]
+                                    and "failed to fetch file" in errors[-1]["message"]
+                                ):
                                     retries = max_retries + 1
-                                    raise Exception(f"could not fetch URL {audio_url}, not retrying")
+                                    raise Exception(
+                                        f"could not fetch URL {audio_url}, not retrying"
+                                    )
 
                         raise Exception(
                             f"Speechmatics transcription failed: {str(e)}"
@@ -150,7 +166,7 @@ def transcribe_with_retry(
                 transcriber = aai.Transcriber()
                 config = aai.TranscriptionConfig(
                     speech_model=model_name.split("/")[1],
-                    language_code="en",
+                    language_code=ASSEMBLY_LANGUAGE_MAP[language],
                 )
                 if use_url:
                     audio_url = sample["row"]["audio"][0]["src"]
@@ -182,7 +198,7 @@ def transcribe_with_retry(
                         model=model_name.split("/")[1],
                         file=audio_data,
                         response_format="text",
-                        language="en",
+                        language=OPENAI_LANGUAGE_MAP[language],
                         temperature=0.0,
                     )
                 else:
@@ -191,7 +207,7 @@ def transcribe_with_retry(
                             model=model_name.split("/")[1],
                             file=audio_file,
                             response_format="text",
-                            language="en",
+                            language=OPENAI_LANGUAGE_MAP[language],
                             temperature=0.0,
                         )
                 return response.strip()
@@ -204,7 +220,7 @@ def transcribe_with_retry(
                     transcription = client.speech_to_text.convert(
                         file=audio_data,
                         model_id=model_name.split("/")[1],
-                        language_code="eng",
+                        language_code=ELEVENLABS_LANGUAGE_MAP[language],
                         tag_audio_events=True,
                     )
                 else:
@@ -212,7 +228,7 @@ def transcribe_with_retry(
                         transcription = client.speech_to_text.convert(
                             file=audio_file,
                             model_id=model_name.split("/")[1],
-                            language_code="eng",
+                            language_code=ELEVENLABS_LANGUAGE_MAP[language],
                             tag_audio_events=True,
                         )
                 return transcription.text
@@ -227,6 +243,7 @@ def transcribe_with_retry(
                         transcriber=model_name.split("/")[1],
                         source_config=CustomerUrlData(sample["row"]["audio"][0]["src"]),
                         metadata="benchmarking_job",
+                        language=REVAI_LANGUAGE_MAP[language],
                     )
                 else:
                     # Submit job with local file
@@ -234,6 +251,7 @@ def transcribe_with_retry(
                         transcriber=model_name.split("/")[1],
                         filename=audio_file_path,
                         metadata="benchmarking_job",
+                        language=REVAI_LANGUAGE_MAP[language],
                     )
 
                 # Polling until job is done
@@ -286,20 +304,30 @@ def transcribe_dataset(
     dataset,
     split,
     model_name,
+    language,
+    is_deepdub_dataset=False,
     use_url=False,
     max_samples=None,
     max_workers=4,
 ):
-    if use_url:
-        audio_rows = fetch_audio_urls(dataset_path, dataset, split)
-        if max_samples:
-            audio_rows = itertools.islice(audio_rows, max_samples)
-        ds = audio_rows
-    else:
-        ds = datasets.load_dataset(dataset_path, dataset, split=split, streaming=False)
+    if is_deepdub_dataset:
+        ds = create_hf_dataset_from_folder(dataset_path)
         ds = data_utils.prepare_data(ds)
         if max_samples:
             ds = ds.take(max_samples)
+    else:
+        if use_url:
+            audio_rows = fetch_audio_urls(dataset_path, dataset, split)
+            if max_samples:
+                audio_rows = itertools.islice(audio_rows, max_samples)
+            ds = audio_rows
+        else:
+            ds = datasets.load_dataset(
+                dataset_path, dataset, split=split, streaming=False
+            )
+            ds = data_utils.prepare_data(ds)
+            if max_samples:
+                ds = ds.take(max_samples)
 
     results = {
         "references": [],
@@ -317,7 +345,7 @@ def transcribe_dataset(
             start = time.time()
             try:
                 transcription = transcribe_with_retry(
-                    model_name, None, sample, use_url=True
+                    model_name, None, sample, language, use_url=True
                 )
             except Exception as e:
                 print(f"Failed to transcribe after retries: {e}")
@@ -340,7 +368,7 @@ def transcribe_dataset(
             start = time.time()
             try:
                 transcription = transcribe_with_retry(
-                    model_name, tmp_path, sample, use_url=False
+                    model_name, tmp_path, sample, language, use_url=False
                 )
             except Exception as e:
                 print(f"Failed to transcribe after retries: {e}")
@@ -413,6 +441,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset_path", required=True)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--split", default="test")
+    parser.add_argument("--language", required=True, type=str)
     parser.add_argument(
         "--model_name",
         required=True,
@@ -422,6 +451,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max_workers", type=int, default=300, help="Number of concurrent threads"
     )
+    parser.add_argument("--is_deepdub_dataset", type=bool, default=False)
     parser.add_argument(
         "--use_url",
         action="store_true",
@@ -435,6 +465,8 @@ if __name__ == "__main__":
         dataset=args.dataset,
         split=args.split,
         model_name=args.model_name,
+        language=Languages(args.language.lower()),
+        is_deepdub_dataset=args.is_deepdub_dataset,
         use_url=args.use_url,
         max_samples=args.max_samples,
         max_workers=args.max_workers,
