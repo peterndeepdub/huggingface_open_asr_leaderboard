@@ -1,4 +1,5 @@
 torch
+torchcodec
 transformers
 evaluate
 datasets
